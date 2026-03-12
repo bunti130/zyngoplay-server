@@ -1,7 +1,7 @@
 {
   "name": "zyngoplay-server",
   "version": "1.0.0",
-  "description": "",
+  "description": "ZyngoPlay multiplayer gaming backend",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -17,6 +17,7 @@
     "socket.io": "^4.8.3",
     "uuid": "^13.0.0",
     "express-rate-limit": "^7.0.0",
-    "helmet": "^7.0.0"
+    "helmet": "^7.0.0",
+    "chess.js": "^1.0.0"
   }
 }
