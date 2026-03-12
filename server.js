@@ -3,6 +3,8 @@ const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
 const admin = require("firebase-admin");
+const rateLimit = require("express-rate-limit");
+const helmet = require("helmet");
 
 /* FIREBASE ENV */
 
@@ -17,8 +19,19 @@ const db = admin.firestore();
 /* EXPRESS */
 
 const app = express();
+
 app.use(cors());
 app.use(express.json());
+app.use(helmet());
+
+/* RATE LIMITER */
+
+const limiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100
+});
+
+app.use(limiter);
 
 const server = http.createServer(app);
 
@@ -93,6 +106,10 @@ app.post("/register",async(req,res)=>{
 
     const {userId,deviceId} = req.body;
 
+    if(!userId || !deviceId){
+      return res.send({error:"invalid data"});
+    }
+
     const deviceCheck = await db.collection("devices").doc(deviceId).get();
 
     if(deviceCheck.exists){
@@ -147,21 +164,13 @@ app.get("/wallet/:userId",async(req,res)=>{
       .get();
 
     if(!wallet.exists){
-
-      return res.send({
-        error:"wallet not found"
-      });
-
+      return res.send({error:"wallet not found"});
     }
 
     res.send(wallet.data());
 
   }catch(err){
-
-    res.send({
-      error:"wallet error"
-    });
-
+    res.send({error:"wallet error"});
   }
 
 });
@@ -174,6 +183,10 @@ app.post("/deposit",async(req,res)=>{
 
     const {userId,amount} = req.body;
 
+    if(amount <= 0){
+      return res.send({error:"invalid amount"});
+    }
+
     const walletRef = db.collection("wallets").doc(userId);
     const wallet = await walletRef.get();
 
@@ -183,15 +196,11 @@ app.post("/deposit",async(req,res)=>{
       deposit:data.deposit + amount
     });
 
-    res.send({
-      status:"deposit added"
-    });
+    res.send({status:"deposit added"});
 
   }catch(err){
 
-    res.send({
-      error:"deposit failed"
-    });
+    res.send({error:"deposit failed"});
 
   }
 
@@ -204,6 +213,10 @@ app.post("/join-game",async(req,res)=>{
   try{
 
     const {userId,entryFee} = req.body;
+
+    if(entryFee <= 0){
+      return res.send({error:"invalid entry fee"});
+    }
 
     const walletRef = db.collection("wallets").doc(userId);
     const wallet = await walletRef.get();
@@ -238,9 +251,7 @@ app.post("/join-game",async(req,res)=>{
         winning -= fee;
         fee = 0;
       }else{
-        return res.send({
-          error:"not enough balance"
-        });
+        return res.send({error:"not enough balance"});
       }
 
     }
@@ -251,15 +262,11 @@ app.post("/join-game",async(req,res)=>{
       winning
     });
 
-    res.send({
-      status:"joined game"
-    });
+    res.send({status:"joined game"});
 
   }catch(err){
 
-    res.send({
-      error:"join failed"
-    });
+    res.send({error:"join failed"});
 
   }
 
@@ -282,15 +289,11 @@ app.post("/game-win",async(req,res)=>{
       winning:data.winning + prize
     });
 
-    res.send({
-      status:"prize added"
-    });
+    res.send({status:"prize added"});
 
   }catch(err){
 
-    res.send({
-      error:"win update failed"
-    });
+    res.send({error:"win update failed"});
 
   }
 
@@ -309,11 +312,7 @@ app.post("/withdraw-request",async(req,res)=>{
     const data = wallet.data();
 
     if(data.winning < amount){
-
-      return res.send({
-        error:"not enough winning balance"
-      });
-
+      return res.send({error:"not enough winning balance"});
     }
 
     const requestId = "wd_"+Date.now();
@@ -329,15 +328,11 @@ app.post("/withdraw-request",async(req,res)=>{
 
       });
 
-    res.send({
-      status:"withdraw request submitted"
-    });
+    res.send({status:"withdraw request submitted"});
 
   }catch(err){
 
-    res.send({
-      error:"withdraw request failed"
-    });
+    res.send({error:"withdraw request failed"});
 
   }
 
@@ -366,9 +361,7 @@ app.get("/admin/withdraw-requests",async(req,res)=>{
 
   }catch(err){
 
-    res.send({
-      error:"fetch failed"
-    });
+    res.send({error:"fetch failed"});
 
   }
 
@@ -400,15 +393,11 @@ app.post("/admin/approve-withdraw",async(req,res)=>{
       status:"approved"
     });
 
-    res.send({
-      status:"withdraw approved"
-    });
+    res.send({status:"withdraw approved"});
 
   }catch(err){
 
-    res.send({
-      error:"approve failed"
-    });
+    res.send({error:"approve failed"});
 
   }
 
@@ -428,15 +417,11 @@ app.post("/admin/reject-withdraw",async(req,res)=>{
         status:"rejected"
       });
 
-    res.send({
-      status:"withdraw rejected"
-    });
+    res.send({status:"withdraw rejected"});
 
   }catch(err){
 
-    res.send({
-      error:"reject failed"
-    });
+    res.send({error:"reject failed"});
 
   }
 
