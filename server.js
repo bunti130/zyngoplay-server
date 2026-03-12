@@ -6,7 +6,7 @@ const admin = require("firebase-admin");
 const rateLimit = require("express-rate-limit");
 const helmet = require("helmet");
 
-/* FIREBASE ENV */
+/* FIREBASE */
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
 
@@ -19,12 +19,9 @@ const db = admin.firestore();
 /* EXPRESS */
 
 const app = express();
-
 app.use(cors());
 app.use(express.json());
 app.use(helmet());
-
-/* RATE LIMITER */
 
 const limiter = rateLimit({
   windowMs: 60 * 1000,
@@ -66,21 +63,22 @@ io.on("connection",(socket)=>{
 
   });
 
-  socket.on("find_match",()=>{
+  socket.on("find_match",(data)=>{
 
     matchmakingQueue.push({
-      socket:socket.id
+      socket:socket.id,
+      userId:data.userId
     });
 
     if(matchmakingQueue.length >= 2){
 
-      const player1 = matchmakingQueue.shift();
-      const player2 = matchmakingQueue.shift();
+      const p1 = matchmakingQueue.shift();
+      const p2 = matchmakingQueue.shift();
 
       const roomId = "room_"+Date.now();
 
-      io.to(player1.socket).emit("match_found",roomId);
-      io.to(player2.socket).emit("match_found",roomId);
+      io.to(p1.socket).emit("match_found",roomId);
+      io.to(p2.socket).emit("match_found",roomId);
 
     }
 
@@ -98,7 +96,7 @@ app.get("/",(req,res)=>{
   res.send("ZyngoPlay Server Running");
 });
 
-/* REGISTER SYSTEM */
+/* REGISTER */
 
 app.post("/register",async(req,res)=>{
 
@@ -106,48 +104,30 @@ app.post("/register",async(req,res)=>{
 
     const {userId,deviceId} = req.body;
 
-    if(!userId || !deviceId){
-      return res.send({error:"invalid data"});
-    }
-
     const deviceCheck = await db.collection("devices").doc(deviceId).get();
 
     if(deviceCheck.exists){
-      return res.send({
-        error:"Only one account allowed per device"
-      });
+      return res.send({error:"Only one account allowed"});
     }
 
     await db.collection("devices").doc(deviceId).set({
-      userId:userId
+      userId
     });
 
-    const walletRef = db.collection("wallets").doc(userId);
-
-    const walletCheck = await walletRef.get();
-
-    if(!walletCheck.exists){
-
-      await walletRef.set({
-
-        deposit:0,
-        bonus:100,
-        winning:0
-
-      });
-
-    }
+    await db.collection("wallets").doc(userId).set({
+      deposit:0,
+      bonus:100,
+      winning:0
+    });
 
     res.send({
       status:"account created",
       bonus:100
     });
 
-  }catch(err){
+  }catch(e){
 
-    res.send({
-      error:"register failed"
-    });
+    res.send({error:"register failed"});
 
   }
 
@@ -157,52 +137,15 @@ app.post("/register",async(req,res)=>{
 
 app.get("/wallet/:userId",async(req,res)=>{
 
-  try{
+  const wallet = await db.collection("wallets")
+    .doc(req.params.userId)
+    .get();
 
-    const wallet = await db.collection("wallets")
-      .doc(req.params.userId)
-      .get();
-
-    if(!wallet.exists){
-      return res.send({error:"wallet not found"});
-    }
-
-    res.send(wallet.data());
-
-  }catch(err){
-    res.send({error:"wallet error"});
+  if(!wallet.exists){
+    return res.send({error:"wallet not found"});
   }
 
-});
-
-/* DEPOSIT */
-
-app.post("/deposit",async(req,res)=>{
-
-  try{
-
-    const {userId,amount} = req.body;
-
-    if(amount <= 0){
-      return res.send({error:"invalid amount"});
-    }
-
-    const walletRef = db.collection("wallets").doc(userId);
-    const wallet = await walletRef.get();
-
-    const data = wallet.data();
-
-    await walletRef.update({
-      deposit:data.deposit + amount
-    });
-
-    res.send({status:"deposit added"});
-
-  }catch(err){
-
-    res.send({error:"deposit failed"});
-
-  }
+  res.send(wallet.data());
 
 });
 
@@ -210,77 +153,87 @@ app.post("/deposit",async(req,res)=>{
 
 app.post("/join-game",async(req,res)=>{
 
-  try{
+  const {userId,entryFee} = req.body;
 
-    const {userId,entryFee} = req.body;
+  const walletRef = db.collection("wallets").doc(userId);
+  const wallet = await walletRef.get();
 
-    if(entryFee <= 0){
-      return res.send({error:"invalid entry fee"});
-    }
+  let {deposit,bonus,winning} = wallet.data();
 
-    const walletRef = db.collection("wallets").doc(userId);
-    const wallet = await walletRef.get();
+  let fee = entryFee;
 
-    let {deposit,bonus,winning} = wallet.data();
+  if(bonus >= fee){
+    bonus -= fee;
+    fee = 0;
+  }else{
+    fee -= bonus;
+    bonus = 0;
+  }
 
-    let fee = entryFee;
+  if(fee > 0){
 
-    if(bonus >= fee){
-      bonus -= fee;
+    if(deposit >= fee){
+      deposit -= fee;
       fee = 0;
     }else{
-      fee -= bonus;
-      bonus = 0;
+      fee -= deposit;
+      deposit = 0;
     }
-
-    if(fee > 0){
-
-      if(deposit >= fee){
-        deposit -= fee;
-        fee = 0;
-      }else{
-        fee -= deposit;
-        deposit = 0;
-      }
-
-    }
-
-    if(fee > 0){
-
-      if(winning >= fee){
-        winning -= fee;
-        fee = 0;
-      }else{
-        return res.send({error:"not enough balance"});
-      }
-
-    }
-
-    await walletRef.update({
-      deposit,
-      bonus,
-      winning
-    });
-
-    res.send({status:"joined game"});
-
-  }catch(err){
-
-    res.send({error:"join failed"});
 
   }
 
+  if(fee > 0){
+
+    if(winning >= fee){
+      winning -= fee;
+      fee = 0;
+    }else{
+      return res.send({error:"not enough balance"});
+    }
+
+  }
+
+  await walletRef.update({
+    deposit,
+    bonus,
+    winning
+  });
+
+  res.send({
+    status:"joined game"
+  });
+
 });
 
-/* GAME WIN */
+/* GAME RESULT ENGINE */
 
-app.post("/game-win",async(req,res)=>{
+app.post("/submit-result",async(req,res)=>{
 
   try{
 
-    const {userId,prize} = req.body;
+    const {roomId,winnerId,loserId,prize} = req.body;
 
-    const walletRef = db.collection("wallets").doc(userId);
+    if(!roomId || !winnerId){
+      return res.send({error:"invalid result"});
+    }
+
+    /* save match history */
+
+    const matchId = "match_"+Date.now();
+
+    await db.collection("matches")
+      .doc(matchId)
+      .set({
+        roomId,
+        winnerId,
+        loserId,
+        prize,
+        createdAt:Date.now()
+      });
+
+    /* update winner wallet */
+
+    const walletRef = db.collection("wallets").doc(winnerId);
     const wallet = await walletRef.get();
 
     const data = wallet.data();
@@ -289,13 +242,80 @@ app.post("/game-win",async(req,res)=>{
       winning:data.winning + prize
     });
 
-    res.send({status:"prize added"});
+    /* update leaderboard */
+
+    const boardRef = db.collection("leaderboard").doc(winnerId);
+    const board = await boardRef.get();
+
+    if(board.exists){
+
+      const stats = board.data();
+
+      await boardRef.update({
+        wins:stats.wins + 1,
+        totalPrize:stats.totalPrize + prize
+      });
+
+    }else{
+
+      await boardRef.set({
+        wins:1,
+        totalPrize:prize
+      });
+
+    }
+
+    res.send({
+      status:"result recorded"
+    });
 
   }catch(err){
 
-    res.send({error:"win update failed"});
+    res.send({
+      error:"result engine failed"
+    });
 
   }
+
+});
+
+/* MATCH HISTORY */
+
+app.get("/match-history/:userId",async(req,res)=>{
+
+  const snapshot = await db.collection("matches")
+    .where("winnerId","==",req.params.userId)
+    .get();
+
+  const matches = [];
+
+  snapshot.forEach(doc=>{
+    matches.push(doc.data());
+  });
+
+  res.send(matches);
+
+});
+
+/* LEADERBOARD */
+
+app.get("/leaderboard",async(req,res)=>{
+
+  const snapshot = await db.collection("leaderboard")
+    .orderBy("wins","desc")
+    .limit(20)
+    .get();
+
+  const list = [];
+
+  snapshot.forEach(doc=>{
+    list.push({
+      userId:doc.id,
+      ...doc.data()
+    });
+  });
+
+  res.send(list);
 
 });
 
@@ -303,67 +323,52 @@ app.post("/game-win",async(req,res)=>{
 
 app.post("/withdraw-request",async(req,res)=>{
 
-  try{
+  const {userId,amount} = req.body;
 
-    const {userId,amount} = req.body;
+  const wallet = await db.collection("wallets").doc(userId).get();
+  const data = wallet.data();
 
-    const wallet = await db.collection("wallets").doc(userId).get();
-
-    const data = wallet.data();
-
-    if(data.winning < amount){
-      return res.send({error:"not enough winning balance"});
-    }
-
-    const requestId = "wd_"+Date.now();
-
-    await db.collection("withdraw_requests")
-      .doc(requestId)
-      .set({
-
-        userId,
-        amount,
-        status:"pending",
-        createdAt:Date.now()
-
-      });
-
-    res.send({status:"withdraw request submitted"});
-
-  }catch(err){
-
-    res.send({error:"withdraw request failed"});
-
+  if(data.winning < amount){
+    return res.send({
+      error:"not enough winning balance"
+    });
   }
+
+  const requestId = "wd_"+Date.now();
+
+  await db.collection("withdraw_requests")
+    .doc(requestId)
+    .set({
+      userId,
+      amount,
+      status:"pending",
+      createdAt:Date.now()
+    });
+
+  res.send({
+    status:"withdraw request submitted"
+  });
 
 });
 
-/* ADMIN VIEW REQUESTS */
+/* ADMIN VIEW */
 
 app.get("/admin/withdraw-requests",async(req,res)=>{
 
-  try{
+  const snapshot = await db.collection("withdraw_requests")
+    .where("status","==","pending")
+    .get();
 
-    const snapshot = await db.collection("withdraw_requests")
-      .where("status","==","pending")
-      .get();
+  const list = [];
 
-    const requests = [];
-
-    snapshot.forEach(doc=>{
-      requests.push({
-        id:doc.id,
-        ...doc.data()
-      });
+  snapshot.forEach(doc=>{
+    list.push({
+      id:doc.id,
+      ...doc.data()
     });
+  });
 
-    res.send(requests);
-
-  }catch(err){
-
-    res.send({error:"fetch failed"});
-
-  }
+  res.send(list);
 
 });
 
@@ -371,35 +376,29 @@ app.get("/admin/withdraw-requests",async(req,res)=>{
 
 app.post("/admin/approve-withdraw",async(req,res)=>{
 
-  try{
+  const {requestId} = req.body;
 
-    const {requestId} = req.body;
+  const requestRef = db.collection("withdraw_requests").doc(requestId);
+  const request = await requestRef.get();
 
-    const requestRef = db.collection("withdraw_requests").doc(requestId);
-    const request = await requestRef.get();
+  const data = request.data();
 
-    const data = request.data();
+  const walletRef = db.collection("wallets").doc(data.userId);
+  const wallet = await walletRef.get();
 
-    const walletRef = db.collection("wallets").doc(data.userId);
-    const wallet = await walletRef.get();
+  const walletData = wallet.data();
 
-    const walletData = wallet.data();
+  await walletRef.update({
+    winning:walletData.winning - data.amount
+  });
 
-    await walletRef.update({
-      winning:walletData.winning - data.amount
-    });
+  await requestRef.update({
+    status:"approved"
+  });
 
-    await requestRef.update({
-      status:"approved"
-    });
-
-    res.send({status:"withdraw approved"});
-
-  }catch(err){
-
-    res.send({error:"approve failed"});
-
-  }
+  res.send({
+    status:"withdraw approved"
+  });
 
 });
 
@@ -407,23 +406,17 @@ app.post("/admin/approve-withdraw",async(req,res)=>{
 
 app.post("/admin/reject-withdraw",async(req,res)=>{
 
-  try{
+  const {requestId} = req.body;
 
-    const {requestId} = req.body;
+  await db.collection("withdraw_requests")
+    .doc(requestId)
+    .update({
+      status:"rejected"
+    });
 
-    await db.collection("withdraw_requests")
-      .doc(requestId)
-      .update({
-        status:"rejected"
-      });
-
-    res.send({status:"withdraw rejected"});
-
-  }catch(err){
-
-    res.send({error:"reject failed"});
-
-  }
+  res.send({
+    status:"withdraw rejected"
+  });
 
 });
 
