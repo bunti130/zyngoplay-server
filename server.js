@@ -142,9 +142,9 @@ app.get("/wallet/:userId",async(req,res)=>{
 
   try{
 
-    const userId = req.params.userId;
-
-    const wallet = await db.collection("wallets").doc(userId).get();
+    const wallet = await db.collection("wallets")
+      .doc(req.params.userId)
+      .get();
 
     if(!wallet.exists){
 
@@ -166,7 +166,7 @@ app.get("/wallet/:userId",async(req,res)=>{
 
 });
 
-/* DEPOSIT API */
+/* DEPOSIT */
 
 app.post("/deposit",async(req,res)=>{
 
@@ -175,28 +175,16 @@ app.post("/deposit",async(req,res)=>{
     const {userId,amount} = req.body;
 
     const walletRef = db.collection("wallets").doc(userId);
-
     const wallet = await walletRef.get();
-
-    if(!wallet.exists){
-
-      return res.send({
-        error:"wallet not found"
-      });
-
-    }
 
     const data = wallet.data();
 
-    const newDeposit = data.deposit + amount;
-
     await walletRef.update({
-      deposit:newDeposit
+      deposit:data.deposit + amount
     });
 
     res.send({
-      status:"deposit added",
-      deposit:newDeposit
+      status:"deposit added"
     });
 
   }catch(err){
@@ -209,7 +197,7 @@ app.post("/deposit",async(req,res)=>{
 
 });
 
-/* JOIN GAME (SMART DEDUCTION) */
+/* JOIN GAME */
 
 app.post("/join-game",async(req,res)=>{
 
@@ -218,45 +206,28 @@ app.post("/join-game",async(req,res)=>{
     const {userId,entryFee} = req.body;
 
     const walletRef = db.collection("wallets").doc(userId);
-
     const wallet = await walletRef.get();
-
-    if(!wallet.exists){
-
-      return res.send({
-        error:"wallet not found"
-      });
-
-    }
 
     let {deposit,bonus,winning} = wallet.data();
 
     let fee = entryFee;
 
     if(bonus >= fee){
-
       bonus -= fee;
       fee = 0;
-
     }else{
-
       fee -= bonus;
       bonus = 0;
-
     }
 
     if(fee > 0){
 
       if(deposit >= fee){
-
         deposit -= fee;
         fee = 0;
-
       }else{
-
         fee -= deposit;
         deposit = 0;
-
       }
 
     }
@@ -264,16 +235,12 @@ app.post("/join-game",async(req,res)=>{
     if(fee > 0){
 
       if(winning >= fee){
-
         winning -= fee;
         fee = 0;
-
       }else{
-
         return res.send({
           error:"not enough balance"
         });
-
       }
 
     }
@@ -285,16 +252,13 @@ app.post("/join-game",async(req,res)=>{
     });
 
     res.send({
-      status:"joined game",
-      deposit,
-      bonus,
-      winning
+      status:"joined game"
     });
 
   }catch(err){
 
     res.send({
-      error:"join game failed"
+      error:"join failed"
     });
 
   }
@@ -310,28 +274,16 @@ app.post("/game-win",async(req,res)=>{
     const {userId,prize} = req.body;
 
     const walletRef = db.collection("wallets").doc(userId);
-
     const wallet = await walletRef.get();
-
-    if(!wallet.exists){
-
-      return res.send({
-        error:"wallet not found"
-      });
-
-    }
 
     const data = wallet.data();
 
-    const newWinning = data.winning + prize;
-
     await walletRef.update({
-      winning:newWinning
+      winning:data.winning + prize
     });
 
     res.send({
-      status:"prize added",
-      winning:newWinning
+      status:"prize added"
     });
 
   }catch(err){
@@ -344,25 +296,15 @@ app.post("/game-win",async(req,res)=>{
 
 });
 
-/* WITHDRAW */
+/* WITHDRAW REQUEST */
 
-app.post("/withdraw",async(req,res)=>{
+app.post("/withdraw-request",async(req,res)=>{
 
   try{
 
     const {userId,amount} = req.body;
 
-    const walletRef = db.collection("wallets").doc(userId);
-
-    const wallet = await walletRef.get();
-
-    if(!wallet.exists){
-
-      return res.send({
-        error:"wallet not found"
-      });
-
-    }
+    const wallet = await db.collection("wallets").doc(userId).get();
 
     const data = wallet.data();
 
@@ -374,21 +316,126 @@ app.post("/withdraw",async(req,res)=>{
 
     }
 
-    const newWinning = data.winning - amount;
+    const requestId = "wd_"+Date.now();
 
-    await walletRef.update({
-      winning:newWinning
-    });
+    await db.collection("withdraw_requests")
+      .doc(requestId)
+      .set({
+
+        userId,
+        amount,
+        status:"pending",
+        createdAt:Date.now()
+
+      });
 
     res.send({
-      status:"withdraw request created",
-      remainingWinning:newWinning
+      status:"withdraw request submitted"
     });
 
   }catch(err){
 
     res.send({
-      error:"withdraw failed"
+      error:"withdraw request failed"
+    });
+
+  }
+
+});
+
+/* ADMIN VIEW REQUESTS */
+
+app.get("/admin/withdraw-requests",async(req,res)=>{
+
+  try{
+
+    const snapshot = await db.collection("withdraw_requests")
+      .where("status","==","pending")
+      .get();
+
+    const requests = [];
+
+    snapshot.forEach(doc=>{
+      requests.push({
+        id:doc.id,
+        ...doc.data()
+      });
+    });
+
+    res.send(requests);
+
+  }catch(err){
+
+    res.send({
+      error:"fetch failed"
+    });
+
+  }
+
+});
+
+/* ADMIN APPROVE */
+
+app.post("/admin/approve-withdraw",async(req,res)=>{
+
+  try{
+
+    const {requestId} = req.body;
+
+    const requestRef = db.collection("withdraw_requests").doc(requestId);
+    const request = await requestRef.get();
+
+    const data = request.data();
+
+    const walletRef = db.collection("wallets").doc(data.userId);
+    const wallet = await walletRef.get();
+
+    const walletData = wallet.data();
+
+    await walletRef.update({
+      winning:walletData.winning - data.amount
+    });
+
+    await requestRef.update({
+      status:"approved"
+    });
+
+    res.send({
+      status:"withdraw approved"
+    });
+
+  }catch(err){
+
+    res.send({
+      error:"approve failed"
+    });
+
+  }
+
+});
+
+/* ADMIN REJECT */
+
+app.post("/admin/reject-withdraw",async(req,res)=>{
+
+  try{
+
+    const {requestId} = req.body;
+
+    await db.collection("withdraw_requests")
+      .doc(requestId)
+      .update({
+        status:"rejected"
+      });
+
+    res.send({
+      status:"withdraw rejected"
+    });
+
+  }catch(err){
+
+    res.send({
+      error:"reject failed"
     });
 
   }
