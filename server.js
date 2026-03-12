@@ -4,7 +4,7 @@ const { Server } = require("socket.io");
 const cors = require("cors");
 const admin = require("firebase-admin");
 
-/* FIREBASE KEY FROM ENV */
+/* FIREBASE ENV */
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
 
@@ -14,7 +14,7 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-/* EXPRESS APP */
+/* EXPRESS */
 
 const app = express();
 app.use(cors());
@@ -22,202 +22,382 @@ app.use(express.json());
 
 const server = http.createServer(app);
 
-/* SOCKET SERVER */
+/* SOCKET */
 
-const io = new Server(server, {
-  cors: {
-    origin: "*"
-  }
+const io = new Server(server,{
+  cors:{ origin:"*" }
 });
 
-/* GAME MEMORY */
+/* MEMORY */
 
 let rooms = {};
 let matchmakingQueue = [];
 
 /* SOCKET CONNECTION */
 
-io.on("connection", (socket) => {
+io.on("connection",(socket)=>{
 
-  console.log("User connected:", socket.id);
+  console.log("User connected:",socket.id);
 
-  /* JOIN ROOM */
-
-  socket.on("join_room", (roomId) => {
+  socket.on("join_room",(roomId)=>{
 
     socket.join(roomId);
 
-    if (!rooms[roomId]) {
+    if(!rooms[roomId]){
       rooms[roomId] = [];
     }
 
     rooms[roomId].push(socket.id);
 
-    io.to(roomId).emit("players", rooms[roomId]);
+    io.to(roomId).emit("players",rooms[roomId]);
 
   });
 
-  /* MATCHMAKING */
-
-  socket.on("find_match", () => {
+  socket.on("find_match",()=>{
 
     matchmakingQueue.push({
-      socket: socket.id
+      socket:socket.id
     });
 
-    if (matchmakingQueue.length >= 2) {
+    if(matchmakingQueue.length >= 2){
 
       const player1 = matchmakingQueue.shift();
       const player2 = matchmakingQueue.shift();
 
-      const roomId = "room_" + Date.now();
+      const roomId = "room_"+Date.now();
 
-      io.to(player1.socket).emit("match_found", roomId);
-      io.to(player2.socket).emit("match_found", roomId);
+      io.to(player1.socket).emit("match_found",roomId);
+      io.to(player2.socket).emit("match_found",roomId);
 
     }
 
   });
 
-  socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
+  socket.on("disconnect",()=>{
+    console.log("User disconnected:",socket.id);
   });
 
 });
 
 /* SERVER TEST */
 
-app.get("/", (req, res) => {
+app.get("/",(req,res)=>{
   res.send("ZyngoPlay Server Running");
 });
 
 /* REGISTER SYSTEM */
-/* 1 device = 1 account */
 
-app.post("/register", async (req, res) => {
+app.post("/register",async(req,res)=>{
 
-  try {
+  try{
 
-    const { userId, deviceId } = req.body;
+    const {userId,deviceId} = req.body;
 
     const deviceCheck = await db.collection("devices").doc(deviceId).get();
 
-    if (deviceCheck.exists) {
+    if(deviceCheck.exists){
       return res.send({
-        error: "Only one account allowed per device"
+        error:"Only one account allowed per device"
       });
     }
 
     await db.collection("devices").doc(deviceId).set({
-      userId: userId
+      userId:userId
     });
 
-    const walletCheck = await db.collection("wallets").doc(userId).get();
+    const walletRef = db.collection("wallets").doc(userId);
 
-    if (!walletCheck.exists) {
+    const walletCheck = await walletRef.get();
 
-      await db.collection("wallets").doc(userId).set({
-        coins: 100
+    if(!walletCheck.exists){
+
+      await walletRef.set({
+
+        deposit:0,
+        bonus:100,
+        winning:0
+
       });
 
     }
 
     res.send({
-      status: "account created",
-      coins: 100
+      status:"account created",
+      bonus:100
     });
 
-  } catch (error) {
+  }catch(err){
 
     res.send({
-      error: "register failed"
+      error:"register failed"
     });
 
   }
 
 });
 
-/* WALLET BALANCE */
+/* WALLET INFO */
 
-app.get("/wallet/:userId", async (req, res) => {
+app.get("/wallet/:userId",async(req,res)=>{
 
-  try {
+  try{
 
     const userId = req.params.userId;
 
     const wallet = await db.collection("wallets").doc(userId).get();
 
-    if (!wallet.exists) {
+    if(!wallet.exists){
 
       return res.send({
-        error: "wallet not found"
+        error:"wallet not found"
       });
 
     }
 
     res.send(wallet.data());
 
-  } catch (error) {
+  }catch(err){
 
     res.send({
-      error: "wallet error"
+      error:"wallet error"
     });
 
   }
 
 });
 
-/* JOIN GAME */
+/* DEPOSIT API */
 
-app.post("/join-game", async (req, res) => {
+app.post("/deposit",async(req,res)=>{
 
-  try {
+  try{
 
-    const { userId, entryFee } = req.body;
+    const {userId,amount} = req.body;
 
     const walletRef = db.collection("wallets").doc(userId);
+
     const wallet = await walletRef.get();
 
-    if (!wallet.exists) {
+    if(!wallet.exists){
 
       return res.send({
-        error: "wallet not found"
+        error:"wallet not found"
       });
 
     }
 
     const data = wallet.data();
 
-    if (data.coins < entryFee) {
-
-      return res.send({
-        error: "not enough coins"
-      });
-
-    }
+    const newDeposit = data.deposit + amount;
 
     await walletRef.update({
-      coins: data.coins - entryFee
+      deposit:newDeposit
     });
 
     res.send({
-      status: "joined game",
-      remainingCoins: data.coins - entryFee
+      status:"deposit added",
+      deposit:newDeposit
     });
 
-  } catch (error) {
+  }catch(err){
 
     res.send({
-      error: "join failed"
+      error:"deposit failed"
     });
 
   }
 
 });
 
-/* START SERVER */
+/* JOIN GAME (SMART DEDUCTION) */
 
-server.listen(process.env.PORT || 3000, () => {
+app.post("/join-game",async(req,res)=>{
+
+  try{
+
+    const {userId,entryFee} = req.body;
+
+    const walletRef = db.collection("wallets").doc(userId);
+
+    const wallet = await walletRef.get();
+
+    if(!wallet.exists){
+
+      return res.send({
+        error:"wallet not found"
+      });
+
+    }
+
+    let {deposit,bonus,winning} = wallet.data();
+
+    let fee = entryFee;
+
+    if(bonus >= fee){
+
+      bonus -= fee;
+      fee = 0;
+
+    }else{
+
+      fee -= bonus;
+      bonus = 0;
+
+    }
+
+    if(fee > 0){
+
+      if(deposit >= fee){
+
+        deposit -= fee;
+        fee = 0;
+
+      }else{
+
+        fee -= deposit;
+        deposit = 0;
+
+      }
+
+    }
+
+    if(fee > 0){
+
+      if(winning >= fee){
+
+        winning -= fee;
+        fee = 0;
+
+      }else{
+
+        return res.send({
+          error:"not enough balance"
+        });
+
+      }
+
+    }
+
+    await walletRef.update({
+      deposit,
+      bonus,
+      winning
+    });
+
+    res.send({
+      status:"joined game",
+      deposit,
+      bonus,
+      winning
+    });
+
+  }catch(err){
+
+    res.send({
+      error:"join game failed"
+    });
+
+  }
+
+});
+
+/* GAME WIN */
+
+app.post("/game-win",async(req,res)=>{
+
+  try{
+
+    const {userId,prize} = req.body;
+
+    const walletRef = db.collection("wallets").doc(userId);
+
+    const wallet = await walletRef.get();
+
+    if(!wallet.exists){
+
+      return res.send({
+        error:"wallet not found"
+      });
+
+    }
+
+    const data = wallet.data();
+
+    const newWinning = data.winning + prize;
+
+    await walletRef.update({
+      winning:newWinning
+    });
+
+    res.send({
+      status:"prize added",
+      winning:newWinning
+    });
+
+  }catch(err){
+
+    res.send({
+      error:"win update failed"
+    });
+
+  }
+
+});
+
+/* WITHDRAW */
+
+app.post("/withdraw",async(req,res)=>{
+
+  try{
+
+    const {userId,amount} = req.body;
+
+    const walletRef = db.collection("wallets").doc(userId);
+
+    const wallet = await walletRef.get();
+
+    if(!wallet.exists){
+
+      return res.send({
+        error:"wallet not found"
+      });
+
+    }
+
+    const data = wallet.data();
+
+    if(data.winning < amount){
+
+      return res.send({
+        error:"not enough winning balance"
+      });
+
+    }
+
+    const newWinning = data.winning - amount;
+
+    await walletRef.update({
+      winning:newWinning
+    });
+
+    res.send({
+      status:"withdraw request created",
+      remainingWinning:newWinning
+    });
+
+  }catch(err){
+
+    res.send({
+      error:"withdraw failed"
+    });
+
+  }
+
+});
+
+/* SERVER START */
+
+server.listen(process.env.PORT || 3000,()=>{
 
   console.log("ZyngoPlay server running");
 
