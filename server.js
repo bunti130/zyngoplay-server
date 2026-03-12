@@ -23,9 +23,7 @@ const io = new Server(server,{
   cors:{origin:"*"}
 });
 
-/* =========================
-   MEMORY
-========================= */
+/* MEMORY */
 
 let rooms = {};
 let matchmakingQueue = {};
@@ -38,18 +36,14 @@ let games = {};
 class LudoEngine{
 
 constructor(players){
-this.players = players;
-this.turn = players[0];
-this.positions = {red:0,blue:0,green:0,yellow:0};
-}
-
-rollDice(){
-return Math.floor(Math.random()*6)+1;
+this.players=players;
+this.turn=players[0];
+this.positions={red:0,blue:0,green:0,yellow:0};
 }
 
 move(player,steps){
 
-if(this.turn !== player){
+if(this.turn!==player){
 return {error:"not your turn"};
 }
 
@@ -65,8 +59,11 @@ turn:this.turn
 }
 
 nextTurn(){
-const index=this.players.indexOf(this.turn);
-this.turn=this.players[(index+1)%this.players.length];
+
+const i=this.players.indexOf(this.turn);
+
+this.turn=this.players[(i+1)%this.players.length];
+
 }
 
 }
@@ -131,7 +128,9 @@ this.finished={};
 }
 
 submitTime(player,time){
+
 this.finished[player]=time;
+
 }
 
 winner(){
@@ -140,11 +139,13 @@ let best=null;
 
 for(const p in this.finished){
 
-if(!best || this.finished[p]<best.time){
+if(!best||this.finished[p]<best.time){
+
 best={
 player:p,
 time:this.finished[p]
 };
+
 }
 
 }
@@ -156,16 +157,48 @@ return best;
 }
 
 /* =========================
-   SOCKET CONNECTION
+   SOCKET
 ========================= */
 
 io.on("connection",(socket)=>{
 
 console.log("User connected:",socket.id);
 
-/* ROOM JOIN */
+/* MATCHMAKING */
 
-socket.on("join_game_room", ({roomId,userId})=>{
+socket.on("find_match",({userId,game})=>{
+
+if(!matchmakingQueue[game]){
+matchmakingQueue[game]=[];
+}
+
+matchmakingQueue[game].push({
+userId,
+socket:socket.id
+});
+
+if(matchmakingQueue[game].length>=2){
+
+const p1=matchmakingQueue[game].shift();
+const p2=matchmakingQueue[game].shift();
+
+const roomId="room_"+Date.now();
+
+rooms[roomId]={
+players:[p1.userId,p2.userId],
+game
+};
+
+io.to(p1.socket).emit("match_found",roomId);
+io.to(p2.socket).emit("match_found",roomId);
+
+}
+
+});
+
+/* JOIN ROOM */
+
+socket.on("join_game_room",({roomId,userId})=>{
 
 socket.join(roomId);
 
@@ -190,18 +223,9 @@ io.to(roomId).emit("room_players",rooms[roomId].players);
 
 socket.on("ludo_roll_dice",({roomId,player})=>{
 
-const game=games[roomId];
-
-if(!game){
-return;
-}
-
 const dice=Math.floor(Math.random()*6)+1;
 
-io.to(roomId).emit("dice_result",{
-player,
-dice
-});
+io.to(roomId).emit("dice_result",{player,dice});
 
 });
 
@@ -295,10 +319,7 @@ await walletRef.update({
 winning:data.winning+prize
 });
 
-io.to(roomId).emit("game_finished",{
-winner,
-prize
-});
+io.to(roomId).emit("game_finished",{winner,prize});
 
 delete games[roomId];
 
@@ -307,16 +328,14 @@ delete games[roomId];
 });
 
 /* =========================
-   SERVER TEST
+   API
 ========================= */
 
 app.get("/",(req,res)=>{
 res.send("ZyngoPlay Server Running");
 });
 
-/* =========================
-   REGISTER
-========================= */
+/* REGISTER */
 
 app.post("/register",async(req,res)=>{
 
@@ -340,9 +359,7 @@ res.send({status:"account created"});
 
 });
 
-/* =========================
-   WALLET
-========================= */
+/* WALLET */
 
 app.get("/wallet/:userId",async(req,res)=>{
 
@@ -354,9 +371,7 @@ res.send(wallet.data());
 
 });
 
-/* =========================
-   CREATE GAME
-========================= */
+/* CREATE GAME */
 
 app.post("/create-game",(req,res)=>{
 
@@ -388,9 +403,7 @@ res.send({gameId});
 
 });
 
-/* =========================
-   LEADERBOARD
-========================= */
+/* LEADERBOARD */
 
 app.get("/leaderboard",async(req,res)=>{
 
@@ -412,10 +425,8 @@ res.send(list);
 
 });
 
-/* =========================
-   SERVER START
-========================= */
+/* SERVER START */
 
 server.listen(process.env.PORT||3000,()=>{
-console.log("ZyngoPlay v4 server running");
+console.log("ZyngoPlay Server Running");
 });
