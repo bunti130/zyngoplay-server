@@ -4,6 +4,8 @@ const { Server } = require("socket.io");
 const cors = require("cors");
 const admin = require("firebase-admin");
 
+/* FIREBASE KEY FROM ENV */
+
 const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
 
 admin.initializeApp({
@@ -12,11 +14,15 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
+/* EXPRESS APP */
+
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const server = http.createServer(app);
+
+/* SOCKET SERVER */
 
 const io = new Server(server, {
   cors: {
@@ -24,12 +30,18 @@ const io = new Server(server, {
   }
 });
 
+/* GAME MEMORY */
+
 let rooms = {};
 let matchmakingQueue = [];
+
+/* SOCKET CONNECTION */
 
 io.on("connection", (socket) => {
 
   console.log("User connected:", socket.id);
+
+  /* JOIN ROOM */
 
   socket.on("join_room", (roomId) => {
 
@@ -45,9 +57,13 @@ io.on("connection", (socket) => {
 
   });
 
-  socket.on("find_match", (player) => {
+  /* MATCHMAKING */
 
-    matchmakingQueue.push(player);
+  socket.on("find_match", () => {
+
+    matchmakingQueue.push({
+      socket: socket.id
+    });
 
     if (matchmakingQueue.length >= 2) {
 
@@ -64,68 +80,145 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    console.log("User disconnected");
+    console.log("User disconnected:", socket.id);
   });
 
 });
+
+/* SERVER TEST */
 
 app.get("/", (req, res) => {
   res.send("ZyngoPlay Server Running");
 });
 
-
-/* REGISTER SYSTEM
-1 phone = 1 account
-100 coin signup reward
-*/
+/* REGISTER SYSTEM */
+/* 1 device = 1 account */
 
 app.post("/register", async (req, res) => {
 
-  const { userId, deviceId } = req.body;
+  try {
 
-  const deviceCheck = await db.collection("devices").doc(deviceId).get();
+    const { userId, deviceId } = req.body;
 
-  if (deviceCheck.exists) {
-    return res.send({
-      error: "Only one account allowed per device"
+    const deviceCheck = await db.collection("devices").doc(deviceId).get();
+
+    if (deviceCheck.exists) {
+      return res.send({
+        error: "Only one account allowed per device"
+      });
+    }
+
+    await db.collection("devices").doc(deviceId).set({
+      userId: userId
     });
+
+    const walletCheck = await db.collection("wallets").doc(userId).get();
+
+    if (!walletCheck.exists) {
+
+      await db.collection("wallets").doc(userId).set({
+        coins: 100
+      });
+
+    }
+
+    res.send({
+      status: "account created",
+      coins: 100
+    });
+
+  } catch (error) {
+
+    res.send({
+      error: "register failed"
+    });
+
   }
 
-  await db.collection("devices").doc(deviceId).set({
-    userId: userId
-  });
-
-  await db.collection("wallets").doc(userId).set({
-    coins: 100
-  });
-
-  res.send({
-    status: "account created",
-    coins: 100
-  });
-
 });
-
 
 /* WALLET BALANCE */
 
 app.get("/wallet/:userId", async (req, res) => {
 
-  const userId = req.params.userId;
+  try {
 
-  const wallet = await db.collection("wallets").doc(userId).get();
+    const userId = req.params.userId;
 
-  if (!wallet.exists) {
-    return res.send({
-      error: "wallet not found"
+    const wallet = await db.collection("wallets").doc(userId).get();
+
+    if (!wallet.exists) {
+
+      return res.send({
+        error: "wallet not found"
+      });
+
+    }
+
+    res.send(wallet.data());
+
+  } catch (error) {
+
+    res.send({
+      error: "wallet error"
     });
-  }
 
-  res.send(wallet.data());
+  }
 
 });
 
+/* JOIN GAME */
 
-server.listen(3000, () => {
-  console.log("Server running on port 3000");
+app.post("/join-game", async (req, res) => {
+
+  try {
+
+    const { userId, entryFee } = req.body;
+
+    const walletRef = db.collection("wallets").doc(userId);
+    const wallet = await walletRef.get();
+
+    if (!wallet.exists) {
+
+      return res.send({
+        error: "wallet not found"
+      });
+
+    }
+
+    const data = wallet.data();
+
+    if (data.coins < entryFee) {
+
+      return res.send({
+        error: "not enough coins"
+      });
+
+    }
+
+    await walletRef.update({
+      coins: data.coins - entryFee
+    });
+
+    res.send({
+      status: "joined game",
+      remainingCoins: data.coins - entryFee
+    });
+
+  } catch (error) {
+
+    res.send({
+      error: "join failed"
+    });
+
+  }
+
+});
+
+/* START SERVER */
+
+server.listen(process.env.PORT || 3000, () => {
+
+  console.log("ZyngoPlay server running");
+
 });
