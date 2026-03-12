@@ -3,11 +3,12 @@ const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
 const admin = require("firebase-admin");
+const { Chess } = require("chess.js");
 
 const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
 
 admin.initializeApp({
-credential: admin.credential.cert(serviceAccount)
+  credential: admin.credential.cert(serviceAccount)
 });
 
 const db = admin.firestore();
@@ -19,20 +20,20 @@ app.use(express.json());
 const server = http.createServer(app);
 
 const io = new Server(server,{
-cors:{origin:"*"}
+  cors:{origin:"*"}
 });
 
-/* MEMORY */
+/* =========================
+   MEMORY
+========================= */
 
 let rooms = {};
 let matchmakingQueue = {};
 let games = {};
 
-/* ============================= */
-/* GAME ENGINES */
-/* ============================= */
-
-/* LUDO ENGINE */
+/* =========================
+   GAME ENGINES
+========================= */
 
 class LudoEngine{
 
@@ -52,7 +53,7 @@ if(this.turn !== player){
 return {error:"not your turn"};
 }
 
-this.positions[player] += steps;
+this.positions[player]+=steps;
 
 this.nextTurn();
 
@@ -64,28 +65,21 @@ turn:this.turn
 }
 
 nextTurn(){
-
-const index = this.players.indexOf(this.turn);
-
-this.turn = this.players[(index+1)%this.players.length];
-
+const index=this.players.indexOf(this.turn);
+this.turn=this.players[(index+1)%this.players.length];
 }
 
 }
-
-/* CHESS ENGINE */
-
-const { Chess } = require("chess.js");
 
 class ChessEngine{
 
 constructor(){
-this.game = new Chess();
+this.game=new Chess();
 }
 
 move(from,to){
 
-const move = this.game.move({
+const move=this.game.move({
 from,
 to,
 promotion:"q"
@@ -104,17 +98,15 @@ turn:this.game.turn()
 
 }
 
-/* QUIZ ENGINE */
-
 class QuizEngine{
 
 constructor(players){
 
-this.players = players;
-this.scores = {};
+this.players=players;
+this.scores={};
 
 players.forEach(p=>{
-this.scores[p] = 0;
+this.scores[p]=0;
 });
 
 }
@@ -122,7 +114,7 @@ this.scores[p] = 0;
 submitAnswer(player,correct){
 
 if(correct){
-this.scores[player] += 10;
+this.scores[player]+=10;
 }
 
 return this.scores;
@@ -131,17 +123,15 @@ return this.scores;
 
 }
 
-/* PUZZLE ENGINE */
-
 class PuzzleEngine{
 
 constructor(players){
-this.players = players;
-this.finished = {};
+this.players=players;
+this.finished={};
 }
 
 submitTime(player,time){
-this.finished[player] = time;
+this.finished[player]=time;
 }
 
 winner(){
@@ -150,8 +140,11 @@ let best=null;
 
 for(const p in this.finished){
 
-if(!best || this.finished[p] < best.time){
-best={player:p,time:this.finished[p]};
+if(!best || this.finished[p]<best.time){
+best={
+player:p,
+time:this.finished[p]
+};
 }
 
 }
@@ -162,108 +155,174 @@ return best;
 
 }
 
-/* RUMMY ENGINE */
-
-class RummyEngine{
-
-constructor(players){
-
-this.players = players;
-
-this.deck=[];
-this.hands={};
-
-this.createDeck();
-this.shuffle();
-this.deal();
-
-}
-
-createDeck(){
-
-const suits=["H","D","C","S"];
-
-for(let s of suits){
-for(let i=1;i<=13;i++){
-this.deck.push(s+i);
-}
-}
-
-}
-
-shuffle(){
-this.deck.sort(()=>Math.random()-0.5);
-}
-
-deal(){
-
-this.players.forEach(p=>{
-this.hands[p]=this.deck.splice(0,13);
-});
-
-}
-
-}
-
-/* ============================= */
-/* SOCKET */
-/* ============================= */
+/* =========================
+   SOCKET CONNECTION
+========================= */
 
 io.on("connection",(socket)=>{
 
 console.log("User connected:",socket.id);
 
-socket.on("find_match",(data)=>{
+/* ROOM JOIN */
 
-const {userId,game} = data;
+socket.on("join_game_room", ({roomId,userId})=>{
 
-if(!matchmakingQueue[game]){
-matchmakingQueue[game]=[];
+socket.join(roomId);
+
+if(!rooms[roomId]){
+rooms[roomId]={
+players:[],
+state:{},
+createdAt:Date.now()
+};
 }
 
-matchmakingQueue[game].push({
+rooms[roomId].players.push({
 userId,
 socket:socket.id
 });
 
-if(matchmakingQueue[game].length >=2){
+io.to(roomId).emit("room_players",rooms[roomId].players);
 
-const p1 = matchmakingQueue[game].shift();
-const p2 = matchmakingQueue[game].shift();
+});
 
-const roomId="room_"+Date.now();
+/* LUDO DICE */
 
-rooms[roomId]={
-players:[p1.userId,p2.userId],
-game
-};
+socket.on("ludo_roll_dice",({roomId,player})=>{
 
-io.to(p1.socket).emit("match_found",roomId);
-io.to(p2.socket).emit("match_found",roomId);
+const game=games[roomId];
 
+if(!game){
+return;
 }
 
+const dice=Math.floor(Math.random()*6)+1;
+
+io.to(roomId).emit("dice_result",{
+player,
+dice
 });
 
 });
 
-/* ============================= */
-/* SERVER TEST */
-/* ============================= */
+/* LUDO MOVE */
+
+socket.on("ludo_move",({roomId,player,steps})=>{
+
+const game=games[roomId];
+
+if(!game){
+return;
+}
+
+const result=game.move(player,steps);
+
+if(result.error){
+socket.emit("move_error",result.error);
+return;
+}
+
+io.to(roomId).emit("ludo_update",result);
+
+});
+
+/* CHESS MOVE */
+
+socket.on("chess_move",({roomId,from,to})=>{
+
+const game=games[roomId];
+
+if(!game){
+return;
+}
+
+const result=game.move(from,to);
+
+if(result.error){
+socket.emit("move_error",result.error);
+return;
+}
+
+io.to(roomId).emit("chess_update",result);
+
+});
+
+/* QUIZ ANSWER */
+
+socket.on("quiz_answer",({roomId,player,correct})=>{
+
+const game=games[roomId];
+
+if(!game){
+return;
+}
+
+const scores=game.submitAnswer(player,correct);
+
+io.to(roomId).emit("quiz_scores",scores);
+
+});
+
+/* PUZZLE FINISH */
+
+socket.on("puzzle_finish",({roomId,player,time})=>{
+
+const game=games[roomId];
+
+if(!game){
+return;
+}
+
+game.submitTime(player,time);
+
+const winner=game.winner();
+
+io.to(roomId).emit("puzzle_winner",winner);
+
+});
+
+/* GAME RESULT */
+
+socket.on("submit_result",async({roomId,winner,prize})=>{
+
+const walletRef=db.collection("wallets").doc(winner);
+
+const wallet=await walletRef.get();
+
+const data=wallet.data();
+
+await walletRef.update({
+winning:data.winning+prize
+});
+
+io.to(roomId).emit("game_finished",{
+winner,
+prize
+});
+
+delete games[roomId];
+
+});
+
+});
+
+/* =========================
+   SERVER TEST
+========================= */
 
 app.get("/",(req,res)=>{
 res.send("ZyngoPlay Server Running");
 });
 
-/* ============================= */
-/* REGISTER */
-/* ============================= */
+/* =========================
+   REGISTER
+========================= */
 
 app.post("/register",async(req,res)=>{
 
-const {userId,deviceId} = req.body;
+const {userId,deviceId}=req.body;
 
-const deviceCheck = await db.collection("devices").doc(deviceId).get();
+const deviceCheck=await db.collection("devices").doc(deviceId).get();
 
 if(deviceCheck.exists){
 return res.send({error:"device already used"});
@@ -281,13 +340,13 @@ res.send({status:"account created"});
 
 });
 
-/* ============================= */
-/* WALLET */
-/* ============================= */
+/* =========================
+   WALLET
+========================= */
 
 app.get("/wallet/:userId",async(req,res)=>{
 
-const wallet = await db.collection("wallets")
+const wallet=await db.collection("wallets")
 .doc(req.params.userId)
 .get();
 
@@ -295,34 +354,30 @@ res.send(wallet.data());
 
 });
 
-/* ============================= */
-/* GAME CREATE */
-/* ============================= */
+/* =========================
+   CREATE GAME
+========================= */
 
 app.post("/create-game",(req,res)=>{
 
-const {game,players} = req.body;
+const {game,players}=req.body;
 
 let engine;
 
 if(game==="ludo"){
-engine = new LudoEngine(players);
+engine=new LudoEngine(players);
 }
 
 if(game==="chess"){
-engine = new ChessEngine();
+engine=new ChessEngine();
 }
 
 if(game==="quiz"){
-engine = new QuizEngine(players);
+engine=new QuizEngine(players);
 }
 
 if(game==="puzzle"){
-engine = new PuzzleEngine(players);
-}
-
-if(game==="rummy"){
-engine = new RummyEngine(players);
+engine=new PuzzleEngine(players);
 }
 
 const gameId="game_"+Date.now();
@@ -333,13 +388,13 @@ res.send({gameId});
 
 });
 
-/* ============================= */
-/* LEADERBOARD */
-/* ============================= */
+/* =========================
+   LEADERBOARD
+========================= */
 
 app.get("/leaderboard",async(req,res)=>{
 
-const snap = await db.collection("wallets")
+const snap=await db.collection("wallets")
 .orderBy("winning","desc")
 .limit(10)
 .get();
@@ -357,10 +412,10 @@ res.send(list);
 
 });
 
-/* ============================= */
-/* SERVER START */
-/* ============================= */
+/* =========================
+   SERVER START
+========================= */
 
-server.listen(process.env.PORT || 3000,()=>{
-console.log("ZyngoPlay v3 server running");
+server.listen(process.env.PORT||3000,()=>{
+console.log("ZyngoPlay v4 server running");
 });
