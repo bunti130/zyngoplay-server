@@ -32,6 +32,19 @@ let tournaments=[]
 let rateLimit={}
 let reconnectMap={}
 
+/* ================= FRAUD DETECTION ================= */
+
+function detectFraud(userId,amount){
+
+if(amount>100000){
+console.log("Fraud alert:",userId)
+return true
+}
+
+return false
+
+}
+
 /* ================= RATE LIMIT ================= */
 
 app.use((req,res,next)=>{
@@ -98,6 +111,107 @@ return{scores:this.scores}
 
 }
 
+class RummyEngine{
+
+constructor(players){
+
+this.players=players
+this.deck=[]
+this.hands={}
+
+this.createDeck()
+this.shuffle()
+this.deal()
+
+}
+
+createDeck(){
+
+const suits=["H","D","C","S"]
+
+for(let s of suits){
+for(let i=1;i<=13;i++){
+this.deck.push(s+i)
+}
+}
+
+}
+
+shuffle(){
+this.deck.sort(()=>Math.random()-0.5)
+}
+
+deal(){
+
+this.players.forEach(p=>{
+this.hands[p]=this.deck.splice(0,13)
+})
+
+}
+
+checkWin(playerHand){
+
+if(playerHand.length<13){
+return false
+}
+
+return true
+
+}
+
+}
+
+class PokerEngine{
+
+constructor(players){
+
+this.players=players
+this.deck=[]
+this.hands={}
+this.bets={}
+
+this.createDeck()
+this.shuffle()
+this.deal()
+
+}
+
+createDeck(){
+
+const suits=["H","D","C","S"]
+
+for(let s of suits){
+for(let i=1;i<=13;i++){
+this.deck.push(s+i)
+}
+}
+
+}
+
+shuffle(){
+this.deck.sort(()=>Math.random()-0.5)
+}
+
+deal(){
+
+this.players.forEach(p=>{
+this.hands[p]=this.deck.splice(0,2)
+})
+
+}
+
+placeBet(player,amount){
+
+this.bets[player]=amount
+
+return{
+bets:this.bets
+}
+
+}
+
+}
+
 /* ================= SOCKET ================= */
 
 io.on("connection",(socket)=>{
@@ -159,6 +273,8 @@ let engine
 
 if(room.game==="ludo") engine=new LudoEngine(room.players)
 if(room.game==="carrom") engine=new CarromEngine(room.players)
+if(room.game==="rummy") engine=new RummyEngine(room.players)
+if(room.game==="poker") engine=new PokerEngine(room.players)
 
 games[roomId]=engine
 room.state="playing"
@@ -175,7 +291,7 @@ io.to(roomId).emit("game_started")
 socket.on("ludo_move",({roomId,player,steps})=>{
 
 const game=games[roomId]
-if(!game) return
+if(!game)return
 
 const result=game.move(player,steps)
 
@@ -295,6 +411,14 @@ if(amount<10){
 return res.send({error:"invalid amount"})
 }
 
+/* payment verification placeholder */
+
+const paymentVerified=true
+
+if(!paymentVerified){
+return res.send({error:"payment failed"})
+}
+
 const walletRef=db.collection("wallets").doc(userId)
 
 const wallet=await walletRef.get()
@@ -321,6 +445,10 @@ res.send({status:"deposit success"})
 app.post("/withdraw",async(req,res)=>{
 
 const {userId,amount,upi}=req.body
+
+if(detectFraud(userId,amount)){
+return res.send({error:"fraud detected"})
+}
 
 const walletRef=db.collection("wallets").doc(userId)
 
