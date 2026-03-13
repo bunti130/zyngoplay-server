@@ -1,23 +1,51 @@
+const board = document.getElementById("board")
+
+let positions = {}
+
+function createBoard(){
+
+for(let i=0;i<225;i++){
+
+let cell=document.createElement("div")
+
+cell.className="cell"
+
+cell.id="cell"+i
+
+board.appendChild(cell)
+
+}
+
+}
+
 function rollDice(){
-return Math.floor(Math.random()*6)+1;
+
+let dice=Math.floor(Math.random()*6)+1
+
+document.getElementById("dice").innerText="Dice: "+dice
+
+sendMove(dice)
+
 }
 
-function move(state, player, steps){
+function updateBoard(data){
 
-if(!state.positions) state.positions = {};
+positions=data.positions
 
-if(!state.positions[player]) state.positions[player] = 0;
+Object.keys(positions).forEach(player=>{
 
-state.positions[player] += steps;
+let pos=positions[player]
 
-if(state.positions[player] >= 52){
-return {winner: player};
+let cell=document.getElementById("cell"+pos)
+
+if(cell){
+
+cell.innerHTML="🔴"
+
 }
 
-return state;
+})
+
 }
 
-module.exports = {
-rollDice,
-move
-};
+createBoard()
