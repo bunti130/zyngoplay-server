@@ -22,14 +22,14 @@ jobs:
         run: npm install
 
       - name: Install Capacitor
-  run: |
-    npm install @capacitor/core
-    npm install @capacitor/cli
-    npm install @capacitor/android
+        run: |
+          npm install @capacitor/core
+          npm install @capacitor/cli
+          npm install @capacitor/android
 
       - name: Create web assets
         run: |
-          mkdir www
+          mkdir -p www
           echo "<h1>ZyngoPlay</h1>" > www/index.html
 
       - name: Sync Android
