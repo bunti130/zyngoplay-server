@@ -2,22 +2,12 @@ const express=require("express")
 const http=require("http")
 const {Server}=require("socket.io")
 const cors=require("cors")
-const admin=require("firebase-admin")
-
-const serviceAccount=JSON.parse(process.env.FIREBASE_KEY)
-
-admin.initializeApp({
-credential:admin.credential.cert(serviceAccount)
-})
-
-const db=admin.firestore()
 
 const app=express()
 app.use(cors())
 app.use(express.json())
 
 const server=http.createServer(app)
-
 const io=new Server(server,{cors:{origin:"*"}})
 
 /* MEMORY */
@@ -26,15 +16,20 @@ let rooms={}
 let games={}
 let matchmakingQueue={}
 
-/* GAME ENGINES */
+/* LUDO ENGINE */
 
 class LudoEngine{
 
 constructor(players){
+
 this.players=players
 this.turn=players[0]
 this.positions={}
-players.forEach(p=>this.positions[p]=0)
+
+players.forEach(p=>{
+this.positions[p]=0
+})
+
 }
 
 move(player,steps){
@@ -52,12 +47,14 @@ this.turn=this.players[
 return{
 positions:this.positions,
 turn:this.turn,
-steps:steps
+steps
 }
 
 }
 
 }
+
+/* POKER ENGINE */
 
 class PokerEngine{
 
@@ -86,7 +83,9 @@ this.deck.push(s+i)
 }
 
 shuffle(){
+
 this.deck.sort(()=>Math.random()-0.5)
+
 }
 
 deal(){
@@ -97,7 +96,19 @@ this.hands[p]=this.deck.splice(0,2)
 
 }
 
+action(player,action){
+
+return{
+player,
+action,
+hands:this.hands
 }
+
+}
+
+}
+
+/* RUMMY ENGINE */
 
 class RummyEngine{
 
@@ -106,6 +117,7 @@ constructor(players){
 this.players=players
 this.deck=[]
 this.hands={}
+this.discard=[]
 
 this.createDeck()
 this.shuffle()
@@ -126,7 +138,9 @@ this.deck.push(s+i)
 }
 
 shuffle(){
+
 this.deck.sort(()=>Math.random()-0.5)
+
 }
 
 deal(){
@@ -137,7 +151,36 @@ this.hands[p]=this.deck.splice(0,13)
 
 }
 
+draw(player){
+
+const card=this.deck.pop()
+
+this.hands[player].push(card)
+
+return{
+player,
+card,
+hands:this.hands[player]
 }
+
+}
+
+discardCard(player,card){
+
+this.discard.push(card)
+
+this.hands[player]=this.hands[player].filter(c=>c!==card)
+
+return{
+player,
+discard:this.discard
+}
+
+}
+
+}
+
+/* CARROM ENGINE */
 
 class CarromEngine{
 
@@ -164,7 +207,7 @@ scores:this.scores
 
 }
 
-/* UNIVERSAL ENGINE LOADER */
+/* UNIVERSAL ENGINE */
 
 function loadGameEngine(game,players){
 
@@ -186,9 +229,11 @@ return new CarromEngine(players)
 
 }
 
-/* SOCKET */
+/* SOCKET SERVER */
 
 io.on("connection",(socket)=>{
+
+/* MATCHMAKING */
 
 socket.on("find_match",({userId,game})=>{
 
@@ -222,6 +267,8 @@ io.to(p2.socket).emit("match_found",roomId)
 
 })
 
+/* ROOM JOIN */
+
 socket.on("join_room",({roomId,userId})=>{
 
 socket.join(roomId)
@@ -231,6 +278,8 @@ if(!rooms[roomId]) return
 io.to(roomId).emit("players",rooms[roomId].players)
 
 })
+
+/* LUDO MOVE */
 
 socket.on("ludo_move",({roomId,player,steps})=>{
 
@@ -243,6 +292,50 @@ const result=game.move(player,steps)
 io.to(roomId).emit("ludo_update",result)
 
 })
+
+/* POKER ACTION */
+
+socket.on("poker_action",({roomId,player,action})=>{
+
+const game=games[roomId]
+
+if(!game) return
+
+const result=game.action(player,action)
+
+io.to(roomId).emit("poker_update",result)
+
+})
+
+/* RUMMY DRAW */
+
+socket.on("rummy_draw",({roomId,player})=>{
+
+const game=games[roomId]
+
+if(!game) return
+
+const result=game.draw(player)
+
+io.to(roomId).emit("rummy_update",result)
+
+})
+
+/* RUMMY DISCARD */
+
+socket.on("rummy_discard",({roomId,player,card})=>{
+
+const game=games[roomId]
+
+if(!game) return
+
+const result=game.discardCard(player,card)
+
+io.to(roomId).emit("rummy_update",result)
+
+})
+
+/* CARROM POT */
 
 socket.on("carrom_pot",({roomId,player})=>{
 
@@ -258,8 +351,10 @@ io.to(roomId).emit("carrom_update",result)
 
 })
 
-/* SERVER */
+/* SERVER START */
 
 server.listen(process.env.PORT||3000,()=>{
-console.log("ZyngoPlay Server Running")
+
+console.log("ZyngoPlay Multiplayer Server Running")
+
 })
