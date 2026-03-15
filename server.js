@@ -10,10 +10,12 @@ app.use(express.json())
 const server = http.createServer(app)
 
 const io = new Server(server,{
-  cors:{origin:"*"}
+ cors:{origin:"*"}
 })
 
-/* MEMORY */
+/* =========================
+   MEMORY
+========================= */
 
 let rooms = {}
 let games = {}
@@ -21,181 +23,188 @@ let matchmakingQueue = {}
 let turnTimers = {}
 
 /* =========================
-   GAME ENGINES
+   LUDO ENGINE
 ========================= */
 
 class LudoEngine{
 
-  constructor(players){
-    this.players = players
-    this.turn = players[0]
-    this.positions = {}
+ constructor(players){
+  this.players = players
+  this.turn = players[0]
+  this.positions = {}
 
-    players.forEach(p=>{
-      this.positions[p] = 0
-    })
+  players.forEach(p=>{
+   this.positions[p] = 0
+  })
+ }
+
+ rollDice(){
+  return Math.floor(Math.random()*6)+1
+ }
+
+ move(player,steps){
+
+  if(player !== this.turn){
+   return {error:"not your turn"}
   }
 
-  rollDice(){
-    return Math.floor(Math.random()*6)+1
+  this.positions[player]+=steps
+
+  const index = this.players.indexOf(player)
+  this.turn = this.players[(index+1)%this.players.length]
+
+  return {
+   positions:this.positions,
+   turn:this.turn
   }
+ }
 
-  move(player,steps){
-
-    if(player !== this.turn){
-      return {error:"not your turn"}
-    }
-
-    this.positions[player] += steps
-
-    const index = this.players.indexOf(player)
-    this.turn = this.players[(index+1)%this.players.length]
-
-    return{
-      positions:this.positions,
-      turn:this.turn
-    }
-  }
 }
+
+/* =========================
+   POKER ENGINE
+========================= */
 
 class PokerEngine{
 
-  constructor(players){
+ constructor(players){
+  this.players = players
+  this.deck = []
+  this.hands = {}
 
-    this.players = players
-    this.deck = []
-    this.hands = {}
+  this.createDeck()
+  this.shuffle()
+  this.deal()
+ }
 
-    this.createDeck()
-    this.shuffle()
-    this.deal()
+ createDeck(){
+
+  const suits=["H","D","C","S"]
+
+  for(let s of suits){
+   for(let i=1;i<=13;i++){
+    this.deck.push(s+i)
+   }
   }
 
-  createDeck(){
+ }
 
-    const suits=["H","D","C","S"]
+ shuffle(){
+  this.deck.sort(()=>Math.random()-0.5)
+ }
 
-    for(let s of suits){
-      for(let i=1;i<=13;i++){
-        this.deck.push(s+i)
-      }
-    }
+ deal(){
 
+  this.players.forEach(p=>{
+   this.hands[p]=this.deck.splice(0,2)
+  })
+
+ }
+
+ action(player,action){
+
+  return{
+   player,
+   action,
+   hands:this.hands
   }
 
-  shuffle(){
-    this.deck.sort(()=>Math.random()-0.5)
-  }
-
-  deal(){
-
-    this.players.forEach(p=>{
-      this.hands[p]=this.deck.splice(0,2)
-    })
-
-  }
-
-  action(player,action){
-
-    return{
-      player,
-      action,
-      hands:this.hands
-    }
-
-  }
+ }
 
 }
+
+/* =========================
+   RUMMY ENGINE
+========================= */
 
 class RummyEngine{
 
-  constructor(players){
+ constructor(players){
+  this.players=players
+  this.deck=[]
+  this.hands={}
+  this.discard=[]
 
-    this.players = players
-    this.deck = []
-    this.hands = {}
-    this.discard = []
+  this.createDeck()
+  this.shuffle()
+  this.deal()
+ }
 
-    this.createDeck()
-    this.shuffle()
-    this.deal()
+ createDeck(){
 
+  const suits=["H","D","C","S"]
+
+  for(let s of suits){
+   for(let i=1;i<=13;i++){
+    this.deck.push(s+i)
+   }
   }
 
-  createDeck(){
+ }
 
-    const suits=["H","D","C","S"]
+ shuffle(){
+  this.deck.sort(()=>Math.random()-0.5)
+ }
 
-    for(let s of suits){
-      for(let i=1;i<=13;i++){
-        this.deck.push(s+i)
-      }
-    }
+ deal(){
 
+  this.players.forEach(p=>{
+   this.hands[p]=this.deck.splice(0,13)
+  })
+
+ }
+
+ draw(player){
+
+  const card=this.deck.pop()
+  this.hands[player].push(card)
+
+  return{
+   player,
+   card,
+   hands:this.hands[player]
   }
 
-  shuffle(){
-    this.deck.sort(()=>Math.random()-0.5)
+ }
+
+ discardCard(player,card){
+
+  this.discard.push(card)
+  this.hands[player]=this.hands[player].filter(c=>c!==card)
+
+  return{
+   player,
+   discard:this.discard
   }
 
-  deal(){
-
-    this.players.forEach(p=>{
-      this.hands[p]=this.deck.splice(0,13)
-    })
-
-  }
-
-  draw(player){
-
-    const card = this.deck.pop()
-    this.hands[player].push(card)
-
-    return{
-      player,
-      card,
-      hands:this.hands[player]
-    }
-
-  }
-
-  discardCard(player,card){
-
-    this.discard.push(card)
-
-    this.hands[player]=this.hands[player].filter(c=>c!==card)
-
-    return{
-      player,
-      discard:this.discard
-    }
-
-  }
+ }
 
 }
 
+/* =========================
+   CARROM ENGINE
+========================= */
+
 class CarromEngine{
 
-  constructor(players){
+ constructor(players){
+  this.players=players
+  this.scores={}
 
-    this.players = players
-    this.scores = {}
+  players.forEach(p=>{
+   this.scores[p]=0
+  })
+ }
 
-    players.forEach(p=>{
-      this.scores[p]=0
-    })
+ pot(player){
 
+  this.scores[player]+=1
+
+  return{
+   scores:this.scores
   }
 
-  pot(player){
-
-    this.scores[player]+=1
-
-    return{
-      scores:this.scores
-    }
-
-  }
+ }
 
 }
 
@@ -205,13 +214,10 @@ class CarromEngine{
 
 function loadGameEngine(game,players){
 
-  if(game==="ludo") return new LudoEngine(players)
-
-  if(game==="poker") return new PokerEngine(players)
-
-  if(game==="rummy") return new RummyEngine(players)
-
-  if(game==="carrom") return new CarromEngine(players)
+ if(game==="ludo") return new LudoEngine(players)
+ if(game==="poker") return new PokerEngine(players)
+ if(game==="rummy") return new RummyEngine(players)
+ if(game==="carrom") return new CarromEngine(players)
 
 }
 
@@ -221,36 +227,13 @@ function loadGameEngine(game,players){
 
 function startTurnTimer(roomId){
 
-  clearTimeout(turnTimers[roomId])
+ clearTimeout(turnTimers[roomId])
 
-  turnTimers[roomId] = setTimeout(()=>{
-
-    io.to(roomId).emit("turn_timeout")
-
-  },10000)
+ turnTimers[roomId]=setTimeout(()=>{
+  io.to(roomId).emit("turn_timeout")
+ },10000)
 
 }
-
-/* =========================
-   ROOM CLEANUP
-========================= */
-
-function cleanupRooms(){
-
-  for(let roomId in rooms){
-
-    if(!rooms[roomId] || rooms[roomId].players.length === 0){
-
-      delete rooms[roomId]
-      delete games[roomId]
-
-    }
-
-  }
-
-}
-
-setInterval(cleanupRooms,60000)
 
 /* =========================
    SOCKET SERVER
@@ -258,135 +241,132 @@ setInterval(cleanupRooms,60000)
 
 io.on("connection",(socket)=>{
 
-  /* MATCHMAKING */
+ console.log("player connected",socket.id)
 
-  socket.on("find_match",({userId,game})=>{
+ /* MATCHMAKING */
 
-    if(!matchmakingQueue[game]){
-      matchmakingQueue[game]=[]
-    }
+ socket.on("find_match",(data)=>{
 
-    matchmakingQueue[game].push({
-      userId,
-      socket:socket.id
-    })
+  const userId=data.userId
+  const game=data.game
 
-    if(matchmakingQueue[game].length>=2){
+  if(!matchmakingQueue[game]){
+   matchmakingQueue[game]=[]
+  }
 
-      const p1 = matchmakingQueue[game].shift()
-      const p2 = matchmakingQueue[game].shift()
-
-      const roomId="room_"+Date.now()
-
-      rooms[roomId]={
-        players:[p1.userId,p2.userId],
-        game
-      }
-
-      games[roomId]=loadGameEngine(game,rooms[roomId].players)
-
-      io.to(p1.socket).emit("match_found",roomId)
-      io.to(p2.socket).emit("match_found",roomId)
-
-    }
-
+  matchmakingQueue[game].push({
+   userId,
+   socket:socket.id
   })
 
-  /* JOIN ROOM */
+  if(matchmakingQueue[game].length>=2){
 
-  socket.on("join_room",({roomId,userId})=>{
+   const p1=matchmakingQueue[game].shift()
+   const p2=matchmakingQueue[game].shift()
 
-    socket.join(roomId)
+   const roomId="room_"+Date.now()
 
-    if(!rooms[roomId]) return
+   rooms[roomId]={
+    players:[p1.userId,p2.userId],
+    game
+   }
 
-    io.to(roomId).emit("players",rooms[roomId].players)
+   games[roomId]=loadGameEngine(game,rooms[roomId].players)
 
-    startTurnTimer(roomId)
+   io.to(p1.socket).emit("match_found",roomId)
+   io.to(p2.socket).emit("match_found",roomId)
 
-  })
+  }
 
-  /* LUDO MOVE */
+ })
 
-  socket.on("ludo_move",({roomId,player,steps})=>{
+ /* JOIN ROOM */
 
-    const game = games[roomId]
-    if(!game) return
+ socket.on("join_room",({roomId,userId})=>{
 
-    const result = game.move(player,steps)
+  socket.join(roomId)
 
-    io.to(roomId).emit("ludo_update",result)
+  if(!rooms[roomId]) return
 
-    startTurnTimer(roomId)
+  io.to(roomId).emit("players",rooms[roomId].players)
 
-  })
+  startTurnTimer(roomId)
 
-  /* POKER ACTION */
+ })
 
-  socket.on("poker_action",({roomId,player,action})=>{
+ /* LUDO */
 
-    const game = games[roomId]
-    if(!game) return
+ socket.on("ludo_move",({roomId,player,steps})=>{
 
-    const result = game.action(player,action)
+  const game=games[roomId]
+  if(!game) return
 
-    io.to(roomId).emit("poker_update",result)
+  const result=game.move(player,steps)
 
-  })
+  io.to(roomId).emit("ludo_update",result)
 
-  /* RUMMY DRAW */
+  startTurnTimer(roomId)
 
-  socket.on("rummy_draw",({roomId,player})=>{
+ })
 
-    const game = games[roomId]
-    if(!game) return
+ /* POKER */
 
-    const result = game.draw(player)
+ socket.on("poker_action",({roomId,player,action})=>{
 
-    io.to(roomId).emit("rummy_update",result)
+  const game=games[roomId]
+  if(!game) return
 
-  })
+  const result=game.action(player,action)
 
-  /* RUMMY DISCARD */
+  io.to(roomId).emit("poker_update",result)
 
-  socket.on("rummy_discard",({roomId,player,card})=>{
+ })
 
-    const game = games[roomId]
-    if(!game) return
+ /* RUMMY DRAW */
 
-    const result = game.discardCard(player,card)
+ socket.on("rummy_draw",({roomId,player})=>{
 
-    io.to(roomId).emit("rummy_update",result)
+  const game=games[roomId]
+  if(!game) return
 
-  })
+  const result=game.draw(player)
 
-  /* CARROM POT */
+  io.to(roomId).emit("rummy_update",result)
 
-  socket.on("carrom_pot",({roomId,player})=>{
+ })
 
-    const game = games[roomId]
-    if(!game) return
+ /* RUMMY DISCARD */
 
-    const result = game.pot(player)
+ socket.on("rummy_discard",({roomId,player,card})=>{
 
-    io.to(roomId).emit("carrom_update",result)
+  const game=games[roomId]
+  if(!game) return
 
-  })
+  const result=game.discardCard(player,card)
 
-  /* DISCONNECT */
+  io.to(roomId).emit("rummy_update",result)
 
-  socket.on("disconnect",()=>{
+ })
 
-    console.log("player disconnected")
+ /* CARROM */
 
-  })
+ socket.on("carrom_pot",({roomId,player})=>{
+
+  const game=games[roomId]
+  if(!game) return
+
+  const result=game.pot(player)
+
+  io.to(roomId).emit("carrom_update",result)
+
+ })
+
+ socket.on("disconnect",()=>{
+  console.log("player disconnected")
+ })
 
 })
 
-/* SERVER START */
-
 server.listen(process.env.PORT || 3000,()=>{
-
-  console.log("ZyngoPlay Multiplayer Server Running")
-
+ console.log("ZyngoPlay Multiplayer Server Running")
 })
