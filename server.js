@@ -247,6 +247,8 @@ io.on("connection",(socket)=>{
 
  socket.on("find_match",(data)=>{
 
+console.log("MATCH REQUEST:", data)
+
   const userId=data.userId
   const game=data.game
 
