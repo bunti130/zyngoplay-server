@@ -259,7 +259,7 @@ io.on("connection",(socket)=>{
    socket:socket.id
   })
 
-  if(matchmakingQueue[game].length>=2){
+  if(matchmakingQueue[game].length >= 2){
 
    const p1=matchmakingQueue[game].shift()
    const p2=matchmakingQueue[game].shift()
