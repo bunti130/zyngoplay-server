@@ -245,42 +245,59 @@ io.on("connection",(socket)=>{
 
  /* MATCHMAKING */
 
- socket.on("find_match",(data)=>{
+ const io = require("socket.io")(server, {
+  cors: {
+    origin: "*",
+  },
+});
 
-console.log("MATCH REQUEST:", data)
+let queue = [];
 
-  const userId=data.userId
-  const game=data.game
+io.on("connection", (socket) => {
+  console.log("player connected", socket.id);
 
-  if(!matchmakingQueue[game]){
-   matchmakingQueue[game]=[]
-  }
+  socket.on("find_match", (data) => {
+    console.log("MATCH REQUEST:", data);
 
-  matchmakingQueue[game].push({
-   userId,
-   socket:socket.id
-  })
+    // queue তে add
+    queue.push({
+      socket: socket,
+      userId: data.userId,
+      game: data.game,
+    });
 
-  if(matchmakingQueue[game].length >= 2){
+    // same game 2 player match
+    let players = queue.filter(q => q.game === data.game);
 
-   const p1=matchmakingQueue[game].shift()
-   const p2=matchmakingQueue[game].shift()
+    if (players.length >= 2) {
 
-   const roomId="room_"+Date.now()
+      let p1 = players[0];
+      let p2 = players[1];
 
-   rooms[roomId]={
-    players:[p1.userId,p2.userId],
-    game
-   }
+      // remove from queue
+      queue = queue.filter(q => q !== p1 && q !== p2);
 
-   games[roomId]=loadGameEngine(game,rooms[roomId].players)
+      let roomId = "room_" + Date.now();
 
-   io.to(p1.socket).emit("match_found",roomId)
-   io.to(p2.socket).emit("match_found",roomId)
+      p1.socket.join(roomId);
+      p2.socket.join(roomId);
 
-  }
+      console.log("MATCH FOUND:", roomId);
 
- })
+      // send match to both players
+      p1.socket.emit("match_found", { roomId });
+      p2.socket.emit("match_found", { roomId });
+
+    }
+
+  });
+
+  socket.on("disconnect", () => {
+    console.log("player disconnected");
+    queue = queue.filter(q => q.socket !== socket);
+  });
+
+});
 
  /* JOIN ROOM */
 
